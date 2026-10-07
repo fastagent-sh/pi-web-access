@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -7,6 +8,7 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 
 const repoRoot = resolve(new URL("..", import.meta.url).pathname);
+const { name: packageName } = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
 
 test("packed installs keep typebox as a peer dependency (hosted by pi at runtime)", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-web-access-pack-install-"));
@@ -29,8 +31,8 @@ test("packed installs keep typebox as a peer dependency (hosted by pi at runtime
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 
-		const packageRequire = createRequire(join(tempDir, "node_modules", "pi-web-access", "package.json"));
-		const installedManifest = packageRequire("pi-web-access/package.json");
+		const packageRequire = createRequire(join(tempDir, "node_modules", packageName, "package.json"));
+		const installedManifest = packageRequire(`${packageName}/package.json`);
 		assert.equal(installedManifest.peerDependencies?.typebox, "*");
 		assert.equal(installedManifest.dependencies?.typebox, undefined);
 		assert.throws(() => packageRequire.resolve("typebox"), { code: "MODULE_NOT_FOUND" });

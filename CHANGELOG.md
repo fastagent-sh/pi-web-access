@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- A host that serves several conversations at once from one process, with one extension instance per session (an app or chat server built on the Pi SDK), no longer loses results across conversations. Each instance now keeps its own session's results, background fetches and active flag: one conversation starting or ending used to clear every stored result, so a `get_search_content` in another conversation answered "No stored results for responseId …", and its background `includeContent` fetches were aborted. Pi itself, which runs one instance and switches its session, behaves as before. GitHub clones are removed when the last live session ends.
+
 ## [0.37.0] - 2026-10-05
 
 ### Highlights

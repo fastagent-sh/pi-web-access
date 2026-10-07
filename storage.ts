@@ -462,6 +462,12 @@ export function clearResults(): void {
 	storedResults.clear();
 }
 
+/** Drop results from memory only. Unlike deleteResult, the fetch cache files stay: the
+ * session journal still references them, and a later restore reads them back. */
+export function releaseResults(ids: Iterable<string>): void {
+	for (const id of ids) storedResults.delete(id);
+}
+
 function isValidStoredData(data: unknown): data is StoredSearchData {
 	if (!data || typeof data !== "object") return false;
 	const d = data as Record<string, unknown>;
@@ -480,15 +486,25 @@ function isValidStoredData(data: unknown): data is StoredSearchData {
 
 export function restoreFromSession(ctx: ExtensionContext): void {
 	storedResults.clear();
+	loadSessionResults(ctx);
+}
+
+/** Add one session's stored results to memory, leaving other sessions' results in place,
+ * and return the ids it loaded. A host that runs several sessions at once (one extension
+ * instance per session) restores each with this and releases them with releaseResults. */
+export function loadSessionResults(ctx: ExtensionContext): string[] {
 	const now = Date.now();
 	pruneExpiredFetchCache(now);
 
+	const loaded: string[] = [];
 	for (const entry of ctx.sessionManager.getBranch()) {
 		if (entry.type === "custom" && entry.customType === "web-search-results") {
 			const data = entry.data;
 			if (isValidStoredData(data) && now - data.timestamp < CACHE_TTL_MS) {
 				storedResults.set(data.id, data);
+				loaded.push(data.id);
 			}
 		}
 	}
+	return loaded;
 }

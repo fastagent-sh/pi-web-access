@@ -10,13 +10,14 @@ import { ALL_SEARCH_PROVIDERS, getAllowedSearchProviders, getConfiguredSearchRou
 export type { ProviderAvailability } from "./gemini-search.ts";
 import { formatSeconds, getWebSearchConfigDir, resolveCuratorNetworkConfig, runWithProxy } from "./utils.ts";
 import {
-	clearResults,
 	deleteResult,
 	generateId,
 	getAllResults,
-	restoreFromSession,
+	loadSessionResults,
+	releaseResults,
 	storeFetchedContentResult,
 	type QueryResultData,
+	type StoredSearchData,
 } from "./storage.ts";
 import { activityMonitor, type ActivityEntry } from "./activity.ts";
 import { startCuratorServer, type CuratorSearchEntry, type CuratorServerHandle, type IndexedCuratorSearchEntry } from "./curator-server.ts";
@@ -430,8 +431,6 @@ function resolveProvider(
 	return provider;
 }
 
-const pendingFetches = new Map<string, AbortController>();
-let sessionActive = false;
 let widgetVisible = false;
 let widgetUnsubscribe: (() => void) | null = null;
 const pendingCurates = new Map<string, PendingCurate>();
@@ -466,13 +465,6 @@ interface PendingCurate {
 	cancel: (reason?: "user" | "stale") => void;
 	browserPromise?: Promise<void>;
 	browserOpenError?: string;
-}
-
-function abortPendingFetches(): void {
-	for (const controller of pendingFetches.values()) {
-		controller.abort();
-	}
-	pendingFetches.clear();
 }
 
 function closeCurator(callId?: string): void {
@@ -705,12 +697,12 @@ function formatEntryLine(
 	return `${typeStr.padEnd(4)} ${target.padEnd(32)} ${statusStr.padStart(5)} ${duration.padStart(5)} ${indicator}`;
 }
 
-function handleSessionChange(ctx: ExtensionContext): void {
-	abortPendingFetches();
+/** Extension instances with a live session. A host may run several at once (one instance per
+ * session); process-wide resources such as the clone cache are released only when none remains. */
+const liveInstances = new Set<object>();
+
+function refreshUi(ctx: ExtensionContext): void {
 	closeCurator();
-	clearCloneCache();
-	sessionActive = true;
-	restoreFromSession(ctx);
 	// Unsubscribe before clear() to avoid callback with stale ctx
 	widgetUnsubscribe?.();
 	widgetUnsubscribe = null;
@@ -770,6 +762,44 @@ export default function (pi: ExtensionAPI) {
 	const curateKey = initConfig.shortcuts?.curate || DEFAULT_SHORTCUTS.curate;
 	const activityKey = initConfig.shortcuts?.activity || DEFAULT_SHORTCUTS.activity;
 
+	// Session state is this instance's. Pi runs one instance and switches its session; a host
+	// that serves several sessions at once runs one instance per session, and one session
+	// starting or ending must not clear another's results or abort its fetches.
+	const instance = {};
+	const pendingFetches = new Map<string, AbortController>();
+	let sessionActive = false;
+	/** Ids of the results this instance's session holds in memory. */
+	const ownedResults = new Set<string>();
+
+	function abortPendingFetches(): void {
+		for (const controller of pendingFetches.values()) {
+			controller.abort();
+		}
+		pendingFetches.clear();
+	}
+
+	function publish(data: StoredSearchData): void {
+		ownedResults.add(data.id);
+		pi.appendEntry("web-search-results", data);
+	}
+
+	function endSession(): void {
+		sessionActive = false;
+		abortPendingFetches();
+		releaseResults(ownedResults);
+		ownedResults.clear();
+		liveInstances.delete(instance);
+		if (liveInstances.size === 0) clearCloneCache();
+	}
+
+	function startSession(ctx: ExtensionContext): void {
+		endSession();
+		liveInstances.add(instance);
+		sessionActive = true;
+		for (const id of loadSessionResults(ctx)) ownedResults.add(id);
+		refreshUi(ctx);
+	}
+
 	function startBackgroundFetch(urls: string[], proxy?: string, provided?: ExtractedContent[]): string | null {
 		if (urls.length === 0) return null;
 		const fetchId = generateId();
@@ -785,7 +815,7 @@ export default function (pi: ExtensionAPI) {
 					timestamp: Date.now(),
 					urls: stripThumbnails(fetched),
 				} satisfies FetchedContentData;
-				pi.appendEntry("web-search-results", storeFetchedContentResult(fetchId, data));
+				publish(storeFetchedContentResult(fetchId, data));
 				const ok = fetched.filter(f => !f.error).length;
 				const availability = ok === fetched.length
 					? "Full page content now available."
@@ -823,10 +853,10 @@ export default function (pi: ExtensionAPI) {
 	const core = createWebToolCore({
 		settings: coreSettings,
 		storeFetchedContent(id, data) {
-			pi.appendEntry("web-search-results", storeFetchedContentResult(id, data));
+			publish(storeFetchedContentResult(id, data));
 		},
 		publishResult(data) {
-			pi.appendEntry("web-search-results", data);
+			publish(data);
 		},
 		startBackgroundFetch,
 		answerFromPage: (request, ctx, signal) => answerFromPage(request, ctx!, signal),
@@ -1344,16 +1374,13 @@ export default function (pi: ExtensionAPI) {
 		if (event.parentToolCallId && event.toolName === toolNames.webSearch) nestedSearchCallIds.add(event.toolCallId);
 	});
 
-	pi.on("session_start", async (_event, ctx) => { nestedSearchCallIds.clear(); handleSessionChange(ctx); });
-	pi.on("session_tree", async (_event, ctx) => { nestedSearchCallIds.clear(); handleSessionChange(ctx); });
+	pi.on("session_start", async (_event, ctx) => { nestedSearchCallIds.clear(); startSession(ctx); });
+	pi.on("session_tree", async (_event, ctx) => { nestedSearchCallIds.clear(); startSession(ctx); });
 
 	pi.on("session_shutdown", () => {
-		sessionActive = false;
 		nestedSearchCallIds.clear();
-		abortPendingFetches();
+		endSession();
 		closeCurator();
-		clearCloneCache();
-		clearResults();
 		// Unsubscribe before clear() to avoid callback with stale ctx
 		widgetUnsubscribe?.();
 		widgetUnsubscribe = null;
@@ -2578,7 +2605,7 @@ export default function (pi: ExtensionAPI) {
 	if (isCommandEnabled(initConfig, "search")) pi.registerCommand("search", {
 		description: "Browse stored web search results",
 		handler: async (_args, ctx) => {
-			const results = getAllResults();
+			const results = getAllResults().filter((r) => ownedResults.has(r.id));
 
 			if (results.length === 0) {
 				ctx.ui.notify("No stored search results", "info");
@@ -2612,6 +2639,7 @@ export default function (pi: ExtensionAPI) {
 
 			if (action === "Delete") {
 				deleteResult(selected.id);
+				ownedResults.delete(selected.id);
 				ctx.ui.notify(`Deleted ${selected.id.slice(0, 6)}`, "info");
 			} else if (action === "View details") {
 				let info = `ID: ${selected.id}\nType: ${selected.type}\nAge: ${Math.floor((Date.now() - selected.timestamp) / 60000)}m\n\n`;

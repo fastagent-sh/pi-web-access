@@ -34,7 +34,9 @@
     "scraping"
   ],
   "author": "Nico Bailon",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",

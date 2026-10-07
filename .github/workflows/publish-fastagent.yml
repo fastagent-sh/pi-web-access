@@ -1,0 +1,77 @@
+name: Publish @fastagent-sh/pi-web-access
+
+# Publish fastagent's build of pi-web-access to npm from a GitHub Release via Trusted Publishing (OIDC), with
+# provenance and no NPM_TOKEN. The npm trusted publisher must name org fastagent-sh, repo pi-web-access, workflow
+# publish-fastagent.yml, environment npm. The protected environment is the manual gate; this job also verifies the tag,
+# the commit and the package name.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write # OIDC token for Trusted Publishing
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - name: Verify release repository
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [[ "$REPOSITORY" != "fastagent-sh/pi-web-access" ]]; then
+            echo "publishing requires fastagent-sh/pi-web-access (got $REPOSITORY)" >&2
+            exit 1
+          fi
+
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Verify release commit is on the fastagent branch
+        run: |
+          git fetch origin fastagent:refs/remotes/origin/fastagent
+          git merge-base --is-ancestor HEAD origin/fastagent || {
+            echo "release tag must point to a commit on the fastagent branch" >&2
+            exit 1
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          scope: '@fastagent-sh'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Trusted Publishing needs npm 11.5.1 or later.
+      - name: Use a current npm
+        run: npm install -g npm@11 && npm --version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify package name and release tag
+        run: |
+          node -e '
+            const { name, version } = require("./package.json");
+            if (name !== "@fastagent-sh/pi-web-access") { console.error("package name is " + name); process.exit(1) }
+            const expected = "fastagent-v" + version;
+            if (process.env.GITHUB_REF_NAME !== expected) { console.error("release tag " + process.env.GITHUB_REF_NAME + " does not match " + expected); process.exit(1) }
+          '
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test -- --test-concurrency=2
+
+      # prepublishOnly builds dist/ and points pi.extensions at it; postpublish points it back.
+      - name: Publish with provenance
+        run: npm publish --provenance --access public

@@ -5,6 +5,10 @@
 > ([upstream PR #521](https://github.com/nicobailon/pi-web-access/pull/521)). A version is the upstream version it is
 > built from; a fix of ours before the next upstream release takes the next patch number. The demo video and banner
 > are left out of the package (6.4 MB). Once upstream ships the fix, fastagent goes back to `pi-web-access`.
+>
+> To release: bump `version` on the `fastagent` branch, then publish a GitHub Release tagged `fastagent-v<version>`
+> from that commit. `.github/workflows/publish-fastagent.yml` tests it and publishes with Trusted Publishing after
+> the `npm` environment approves.
 
 <p>
   <img src="https://raw.githubusercontent.com/fastagent-sh/pi-web-access/fastagent/banner.png" alt="pi-web-access" width="1100">

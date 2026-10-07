@@ -68,6 +68,8 @@ export interface StoredSearchData {
 }
 
 const storedResults = new Map<string, StoredSearchData>();
+/** How many live sessions hold each result. Sessions forked from one history hold the same ids. */
+const resultHolders = new Map<string, number>();
 
 export function generateId(): string {
 	return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -455,17 +457,33 @@ export function deleteResult(id: string): boolean {
 			}
 		} catch {}
 	}
+	resultHolders.delete(id);
 	return storedResults.delete(id);
 }
 
 export function clearResults(): void {
 	storedResults.clear();
+	resultHolders.clear();
 }
 
-/** Drop results from memory only. Unlike deleteResult, the fetch cache files stay: the
- * session journal still references them, and a later restore reads them back. */
+/** Record that one more live session holds each of these results. */
+export function holdResults(ids: Iterable<string>): void {
+	for (const id of ids) resultHolders.set(id, (resultHolders.get(id) ?? 0) + 1);
+}
+
+/** Release one session's hold on each result, and drop a result from memory once no live
+ * session holds it. Unlike deleteResult, the fetch cache files stay: the session journal
+ * still references them, and a later restore reads them back. */
 export function releaseResults(ids: Iterable<string>): void {
-	for (const id of ids) storedResults.delete(id);
+	for (const id of ids) {
+		const holders = (resultHolders.get(id) ?? 0) - 1;
+		if (holders > 0) {
+			resultHolders.set(id, holders);
+			continue;
+		}
+		resultHolders.delete(id);
+		storedResults.delete(id);
+	}
 }
 
 function isValidStoredData(data: unknown): data is StoredSearchData {
@@ -491,7 +509,8 @@ export function restoreFromSession(ctx: ExtensionContext): void {
 
 /** Add one session's stored results to memory, leaving other sessions' results in place,
  * and return the ids it loaded. A host that runs several sessions at once (one extension
- * instance per session) restores each with this and releases them with releaseResults. */
+ * instance per session) restores each with this, holds the ids with holdResults, and
+ * releases them with releaseResults. */
 export function loadSessionResults(ctx: ExtensionContext): string[] {
 	const now = Date.now();
 	pruneExpiredFetchCache(now);

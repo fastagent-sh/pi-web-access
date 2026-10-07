@@ -5,7 +5,7 @@ import type { ExtractedContent } from "./extract.ts";
 import { normalizeFetchContentParams } from "./fetch-params.ts";
 import { answerFromPage } from "./page-query.ts";
 import { rewriteSearchQuery } from "./query-rewrite.ts";
-import { clearCloneCache } from "./github-extract.ts";
+import { clearCloneCache, releaseClonesUnusedSince } from "./github-extract.ts";
 import { ALL_SEARCH_PROVIDERS, getAllowedSearchProviders, getConfiguredSearchRouting, providerLabel, RESOLVED_SEARCH_PROVIDERS, search, type AttributedSearchResponse, type ProviderAvailability, type SearchProvider, type SearchProviderSelection, type ResolvedSearchProvider } from "./gemini-search.ts";
 export type { ProviderAvailability } from "./gemini-search.ts";
 import { formatSeconds, getWebSearchConfigDir, resolveCuratorNetworkConfig, runWithProxy } from "./utils.ts";
@@ -13,6 +13,7 @@ import {
 	deleteResult,
 	generateId,
 	getAllResults,
+	holdResults,
 	loadSessionResults,
 	releaseResults,
 	storeFetchedContentResult,
@@ -697,9 +698,10 @@ function formatEntryLine(
 	return `${typeStr.padEnd(4)} ${target.padEnd(32)} ${statusStr.padStart(5)} ${duration.padStart(5)} ${indicator}`;
 }
 
-/** Extension instances with a live session. A host may run several at once (one instance per
- * session); process-wide resources such as the clone cache are released only when none remains. */
-const liveInstances = new Set<object>();
+/** Extension instances with a live session, and when that session started. A host may run
+ * several at once (one instance per session); clones are removed outright only when none
+ * remains, and otherwise once no live session can have been given their paths. */
+const liveInstances = new Map<object, number>();
 
 function refreshUi(ctx: ExtensionContext): void {
 	closeCurator();
@@ -778,8 +780,14 @@ export default function (pi: ExtensionAPI) {
 		pendingFetches.clear();
 	}
 
+	function own(id: string): void {
+		if (ownedResults.has(id)) return;
+		ownedResults.add(id);
+		holdResults([id]);
+	}
+
 	function publish(data: StoredSearchData): void {
-		ownedResults.add(data.id);
+		own(data.id);
 		pi.appendEntry("web-search-results", data);
 	}
 
@@ -790,13 +798,14 @@ export default function (pi: ExtensionAPI) {
 		ownedResults.clear();
 		liveInstances.delete(instance);
 		if (liveInstances.size === 0) clearCloneCache();
+		else releaseClonesUnusedSince(Math.min(...liveInstances.values()));
 	}
 
 	function startSession(ctx: ExtensionContext): void {
 		endSession();
-		liveInstances.add(instance);
+		liveInstances.set(instance, Date.now());
 		sessionActive = true;
-		for (const id of loadSessionResults(ctx)) ownedResults.add(id);
+		for (const id of loadSessionResults(ctx)) own(id);
 		refreshUi(ctx);
 	}
 

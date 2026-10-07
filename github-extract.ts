@@ -1026,6 +1026,18 @@ export async function extractGitHub(
 	return { url, title, content, error: null };
 }
 
+/** Mark the clones these URLs name as used now. A session that restores results from history
+ * (its own, or one it was forked from) holds their clone paths without fetching them again. */
+export function touchClones(urls: Iterable<string>): void {
+	const now = Date.now();
+	for (const url of urls) {
+		const info = parseGitHubUrl(url);
+		if (!info) continue;
+		const entry = cloneCache.get(cacheKey(info.owner, info.repo, info.ref));
+		if (entry) entry.lastUsedAt = now;
+	}
+}
+
 /** Remove finished clones no fetch has returned since `time`. A host that runs several
  * sessions at once passes when its oldest live session started: no live session can have
  * been given those paths, so they are reclaimed while sessions keep overlapping. */

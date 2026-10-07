@@ -5,7 +5,7 @@ import type { ExtractedContent } from "./extract.ts";
 import { normalizeFetchContentParams } from "./fetch-params.ts";
 import { answerFromPage } from "./page-query.ts";
 import { rewriteSearchQuery } from "./query-rewrite.ts";
-import { clearCloneCache, releaseClonesUnusedSince } from "./github-extract.ts";
+import { clearCloneCache, releaseClonesUnusedSince, touchClones } from "./github-extract.ts";
 import { ALL_SEARCH_PROVIDERS, getAllowedSearchProviders, getConfiguredSearchRouting, providerLabel, RESOLVED_SEARCH_PROVIDERS, search, type AttributedSearchResponse, type ProviderAvailability, type SearchProvider, type SearchProviderSelection, type ResolvedSearchProvider } from "./gemini-search.ts";
 export type { ProviderAvailability } from "./gemini-search.ts";
 import { formatSeconds, getWebSearchConfigDir, resolveCuratorNetworkConfig, runWithProxy } from "./utils.ts";
@@ -805,7 +805,10 @@ export default function (pi: ExtensionAPI) {
 		endSession();
 		liveInstances.set(instance, Date.now());
 		sessionActive = true;
-		for (const id of loadSessionResults(ctx)) own(id);
+		const restored = loadSessionResults(ctx);
+		for (const data of restored) own(data.id);
+		// Restored results may point at clone paths; they are in use for as long as this session is.
+		touchClones(restored.flatMap((data) => (data.type === "fetch" ? (data.urls ?? data.urlMetadata ?? []).map((u) => u.url) : [])));
 		refreshUi(ctx);
 	}
 

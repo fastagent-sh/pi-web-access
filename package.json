@@ -1,6 +1,6 @@
 {
   "name": "@fastagent-sh/pi-web-access",
-  "version": "0.37.0-fastagent.1",
+  "version": "0.37.0",
   "description": "Web search, URL fetching, GitHub repo cloning, PDF extraction, YouTube video understanding, and local video analysis for Pi coding agent. Supports OpenAI, Brave, Parallel, TinyFish, Search1API, Searchinfinity, Querit, Tavily, Firecrawl, Crawl4AI, Jina, SERPdive, Kagi, Ollama, AnySearch, Bright Data SERP, SerpBase, SerpApi, Serply, You.com, SearXNG, degoog, Exa, Perplexity, Gemini, Kimi, and Mistral.",
   "type": "module",
   "bin": {
@@ -50,9 +50,7 @@
     "dist",
     "*.ts",
     "CHANGELOG.md",
-    "SECURITY.md",
-    "banner.png",
-    "pi-web-fetch-demo.mp4"
+    "SECURITY.md"
   ],
   "devDependencies": {
     "@earendil-works/pi-ai": "1.0.4",

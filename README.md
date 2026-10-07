@@ -2,11 +2,12 @@
 > `@fastagent-sh/pi-web-access`. It differs from upstream in one fix: each extension instance keeps its own session's
 > results, background fetches and active flag, so a host that serves several conversations from one process (one
 > instance per session) does not clear one conversation's results when another starts or ends
-> ([upstream PR #521](https://github.com/nicobailon/pi-web-access/pull/521)). Versions are upstream's with a
-> `-fastagent.N` suffix. Once upstream ships the fix, fastagent goes back to `pi-web-access`.
+> ([upstream PR #521](https://github.com/nicobailon/pi-web-access/pull/521)). A version is the upstream version it is
+> built from; a fix of ours before the next upstream release takes the next patch number. The demo video and banner
+> are left out of the package (6.4 MB). Once upstream ships the fix, fastagent goes back to `pi-web-access`.
 
 <p>
-  <img src="banner.png" alt="pi-web-access" width="1100">
+  <img src="https://raw.githubusercontent.com/fastagent-sh/pi-web-access/fastagent/banner.png" alt="pi-web-access" width="1100">
 </p>
 
 # Pi Web Access

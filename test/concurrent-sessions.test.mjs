@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { after, afterEach, test } from "node:test";
 
 import initializeExtension from "../index.ts";
@@ -104,4 +108,65 @@ test("sessions forked from one history each keep the results they share", async 
 
 	await room.emit("session_shutdown");
 	assert.equal(getResult(shared), null);
+});
+
+test("a session forked from history keeps the clones its results point at after the original session ends", { skip: process.platform === "win32" }, async () => {
+	// Cloning runs a real child process, so the scenario runs in a child Node with a fake `git` on PATH.
+	const root = await mkdtemp(join(tmpdir(), "pi-web-access-forked-clone-"));
+	const agentDir = join(root, "agent-dir");
+	const binDir = join(root, "bin");
+	await mkdir(agentDir, { recursive: true });
+	await mkdir(binDir, { recursive: true });
+	await writeFile(join(agentDir, "web-search.json"), JSON.stringify({ githubClone: { clonePath: join(root, "repos") } }), "utf8");
+	const fake = async (name, source) => writeFile(join(binDir, name), `#!/usr/bin/env node\n${source}\n`, { mode: 0o755 });
+	await fake("gh", "process.exit(1);");
+	await fake("git", `
+		const { mkdirSync, writeFileSync } = require("node:fs");
+		const { join } = require("node:path");
+		const destination = process.argv.at(-1);
+		mkdirSync(destination, { recursive: true });
+		writeFileSync(join(destination, "README.md"), "fixture");
+	`);
+
+	const child = spawnSync(process.execPath, ["--input-type=module"], {
+		input: `
+			const { existsSync } = await import("node:fs");
+			const { default: initializeExtension } = await import(${JSON.stringify(new URL("../index.ts", import.meta.url).href)});
+			const start = (entries) => {
+				const tools = new Map();
+				const handlers = new Map();
+				initializeExtension({
+					registerTool(tool) { tools.set(tool.name, tool); },
+					registerCommand() {},
+					registerShortcut() {},
+					on(event, handler) { handlers.set(event, [...(handlers.get(event) ?? []), handler]); },
+					appendEntry(customType, data) { entries.push({ type: "custom", customType, data }); },
+				});
+				const ctx = { hasUI: false, model: undefined, modelRegistry: {}, scopedModels: [], sessionManager: { getBranch: () => entries }, ui: { setWidget() {}, notify() {} } };
+				const emit = async (event) => { for (const handler of handlers.get(event) ?? []) await handler({ type: event }, ctx); };
+				return { emit, entries, call: (name, params) => tools.get(name).execute(name, params, undefined, undefined, ctx) };
+			};
+			const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+			const a = start([]);
+			await a.emit("session_start");
+			const fetched = await a.call("fetch_content", { url: "https://github.com/owner/repo", forceClone: true });
+			const path = fetched.content[0].text.match(/Repository cloned to: (.+)/)?.[1] ?? null;
+			await sleep(5);
+			// B is forked from A's history after the clone was last fetched.
+			const b = start([...a.entries]);
+			await b.emit("session_start");
+			await a.emit("session_shutdown");
+			const keptForB = path !== null && existsSync(path);
+			await b.emit("session_shutdown");
+			console.log(JSON.stringify({ path, keptForB, removedAfterLast: path !== null && !existsSync(path) }));
+		`,
+		encoding: "utf8",
+		env: { ...process.env, PATH: `${binDir}${delimiter}${process.env.PATH || ""}`, PI_CODING_AGENT_DIR: agentDir },
+	});
+
+	assert.equal(child.status, 0, child.stderr);
+	const result = JSON.parse(child.stdout.trim().split("\n").at(-1));
+	assert.ok(result.path, "fetch_content returned no clone path");
+	assert.equal(result.keptForB, true);
+	assert.equal(result.removedAfterLast, true);
 });

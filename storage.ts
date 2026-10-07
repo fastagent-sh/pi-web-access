@@ -508,20 +508,20 @@ export function restoreFromSession(ctx: ExtensionContext): void {
 }
 
 /** Add one session's stored results to memory, leaving other sessions' results in place,
- * and return the ids it loaded. A host that runs several sessions at once (one extension
- * instance per session) restores each with this, holds the ids with holdResults, and
+ * and return the results it loaded. A host that runs several sessions at once (one extension
+ * instance per session) restores each with this, holds their ids with holdResults, and
  * releases them with releaseResults. */
-export function loadSessionResults(ctx: ExtensionContext): string[] {
+export function loadSessionResults(ctx: ExtensionContext): StoredSearchData[] {
 	const now = Date.now();
 	pruneExpiredFetchCache(now);
 
-	const loaded: string[] = [];
+	const loaded: StoredSearchData[] = [];
 	for (const entry of ctx.sessionManager.getBranch()) {
 		if (entry.type === "custom" && entry.customType === "web-search-results") {
 			const data = entry.data;
 			if (isValidStoredData(data) && now - data.timestamp < CACHE_TTL_MS) {
 				storedResults.set(data.id, data);
-				loaded.push(data.id);
+				loaded.push(data);
 			}
 		}
 	}
